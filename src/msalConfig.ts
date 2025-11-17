@@ -8,7 +8,7 @@ export const msalConfig = {
   auth: {
     clientId: "f08300c9-554d-4992-be6a-c013670dfd3b", // <-- TODO: set Application (client) ID
     authority: "https://login.microsoftonline.com/172bf1ac-3cd2-49a3-afbb-5d8f741a1fa9", // <-- TODO: set your Tenant ID
-    redirectUri: "http://localhost:5173",
+    redirectUri: "https://sso-spike.onrender.com",
   },
   cache: {
     cacheLocation: "sessionStorage",
