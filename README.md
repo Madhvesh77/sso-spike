@@ -1,14 +1,19 @@
-# SSO Spike (Vite + React + TypeScript + Tailwind)
+# Entra ID SSO Spike (Vite + React + TypeScript + Tailwind)
 
-This is a minimal frontend spike for a future SSO integration. It does NOT implement real authentication yet; instead it provides placeholder UI and mock logic.
+This spike demonstrates a minimal Microsoft Entra ID (Azure AD) single-page application using React, MSAL, and proactive token lifecycle management.
 
 ## Features
 
-- Vite + React + TypeScript setup
+**Features**
+
+- Vite + React + TypeScript
 - Tailwind CSS styling
-- `Login with SSO` button (simulated login)
-- Mock user info display (name, email, roles)
-- Logout capability (clears mock user)
+- Microsoft Entra ID (OIDC) authentication via `@azure/msal-browser` & `@azure/msal-react`
+- Login / Logout, ID token claim inspection
+- Access token acquisition for a protected API scope
+- Axios client with automatic bearer injection & 401 handling (silent retry then interactive redirect)
+- `SessionMonitor` component for proactive silent token refresh prior to expiry
+- Role/group extraction from token claims
 
 ## Folder Structure
 
@@ -30,28 +35,31 @@ postcss.config.cjs
 package.json
 ```
 
-## useAuth Hook
+## Authentication Flow
 
-A placeholder hook located at `src/hooks/useAuth.ts` with functions:
-
-- `login()` – simulates async login and sets a mock user
-- `logout()` – clears user
-- `getUser()` – returns current user state
+`src/hooks/useAuth.ts` exposes `login`, `logout`, `getAccessToken`, and `fetchProfile`. Tokens are acquired silently when possible. Interaction-required errors trigger a redirect (full-page) for a seamless production flow.
 
 ## Microsoft Entra OIDC Setup
 
-Fill the placeholders in `src/msalConfig.ts`:
+Edit `src/msalConfig.ts` and set the following placeholders:
 
 ```
 export const msalConfig = {
   auth: {
-    clientId: "REPLACE_WITH_CLIENT_ID",       // Application (client) ID
-    authority: "https://login.microsoftonline.com/REPLACE_WITH_TENANT_ID", // Tenant ID
+    clientId: "REPLACE_WITH_CLIENT_ID", // SPA app registration (Application ID)
+    authority: "https://login.microsoftonline.com/REPLACE_WITH_TENANT_ID", // Tenant (Directory) ID
     redirectUri: "http://localhost:5173"
   },
   cache: { cacheLocation: "sessionStorage", storeAuthStateInCookie: false }
 };
+
+export const apiClientId = "REPLACE_WITH_API_CLIENT_ID"; // Backend API App Registration client ID
+export const apiScope = `api://${apiClientId}/access_as_user`;
+
+Replace the placeholders with your registered application values. The app requests the `apiScope` plus standard OpenID scopes (`openid profile email`).
 ```
+
+The frontend will request an access token for `apiScope` when calling `/api/profile`.
 
 ## Getting Started
 
@@ -62,20 +70,39 @@ npm run dev
 
 Then open the URL printed in the terminal (usually http://localhost:5173).
 
-## How to test
+## Running Locally
 
-1. Open http://localhost:5173
-2. Click "Login with Microsoft"
-3. Sign in with your Entra account
-4. Check the rendered claims JSON and roles/groups list
+1. Set CLIENT_ID, TENANT_ID, and API_CLIENT_ID in `src/msalConfig.ts`.
+2. Run the backend locally with a protected `GET /api/profile` endpoint that validates Entra access tokens.
+3. Start the frontend:
 
-## Next Steps (Not Implemented Yet)
+```bash
+npm run dev
+```
 
-- Integrate real SSO (e.g., Entra ID / OAuth / OIDC)
-- Token storage & refresh logic
-- Role-based conditional rendering
+4. Open http://localhost:5173
+5. Click "Login with Microsoft" and sign in.
+6. (Optional) Click "Get Access Token" to view the raw access token.
+7. Click "Call API" to invoke `GET /api/profile` with `Authorization: Bearer <token>`.
+8. View profile response & claims.
+
+## Session Monitoring
+
+`SessionMonitor` (`src/auth/SessionMonitor.tsx`) silently refreshes tokens shortly before they expire (default 60s lead time). If silent acquisition reports interaction is required, it initiates a guarded redirect login. This replaces earlier dev-only manual expiry simulation.
+
+## Next Steps (Ideas)
+
+- Role-based route guards / component-level authorization
+- Error boundary & retry UX polish
+- Progressive enhancement for offline/network failure states
 
 ## Notes
 
-- This spike uses `@azure/msal-browser` with `loginPopup` for easy local development.
-- No backend code is included; everything runs in the browser.
+- Uses redirect flow for interaction-required scenarios to avoid multiple popups.
+- Silent token acquisition is attempted proactively; interactive login only on required conditions.
+- Roles/groups are derived from `roles` or `groups` claims if present; otherwise UI shows `none`.
+- Tokens are stored in `sessionStorage` per `msalConfig`.
+
+---
+
+This codebase is a learning scaffold; validate security & scopes before production deployment.

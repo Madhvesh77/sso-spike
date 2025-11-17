@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AuthenticationResult, AccountInfo } from "@azure/msal-browser";
-import { PublicClientApplication } from "@azure/msal-browser";
-import { msalConfig, loginRequest } from "../msalConfig";
-
-// Instantiate MSAL once per app lifecycle
-const msalInstance = new PublicClientApplication(msalConfig);
-// Begin asynchronous initialization immediately. MSAL v3 requires initialize() before usage.
-const initializationPromise = msalInstance.initialize();
+import { InteractionRequiredAuthError } from "@azure/msal-browser";
+import { loginRequest, apiScope } from "../msalConfig";
+import { msalInstance } from "../auth/msalClient";
 
 // Types for hook return for better DX
 type Claims = Record<string, unknown>;
 
+interface ProfileResult {
+  data: Record<string, unknown> | null;
+  error: string | null;
+}
+
 interface UseAuthReturn {
+  ready: boolean;
   account: AccountInfo | null;
   idTokenClaims: Claims | null;
   login: () => Promise<AuthenticationResult | null>;
@@ -19,11 +21,13 @@ interface UseAuthReturn {
   getAccount: () => AccountInfo | null;
   getIdTokenClaims: () => Record<string, unknown> | null;
   getAccessToken: () => Promise<string | null>;
+  fetchProfile: () => Promise<ProfileResult>;
 }
 
 export function useAuth(): UseAuthReturn {
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [idTokenClaims, setIdTokenClaims] = useState<Claims | null>(null);
+  const [ready, setReady] = useState(false);
 
   // Track initialization state to avoid repeated awaits.
   const initializedRef = useRef(false);
@@ -31,37 +35,67 @@ export function useAuth(): UseAuthReturn {
   const handledRedirectRef = useRef(false);
 
   // Ensure MSAL is initialized before any calls.
+  const ssoAttemptedRef = useRef(false);
+
   const ensureInitialized = useCallback(async () => {
     if (!initializedRef.current) {
-      // wait for msal initialize
-      await initializationPromise;
+      await msalInstance.initialize();
 
-      // handle redirect response once (if any)
       if (!handledRedirectRef.current) {
         try {
           const redirectResponse = await msalInstance.handleRedirectPromise();
           handledRedirectRef.current = true;
-
           if (redirectResponse) {
-            // redirectResponse may contain tokens and account
-            const acct = redirectResponse.account ?? redirectResponse?.idTokenClaims?.iss ? msalInstance.getAllAccounts()[0] : null;
-            if (acct) {
-              setAccount(acct);
-            }
-            // prefer idTokenClaims from response if present
+            const acct =
+              redirectResponse.account ||
+              msalInstance.getAllAccounts()[0] ||
+              null;
+            if (acct) setAccount(acct);
             if (redirectResponse.idTokenClaims) {
               setIdTokenClaims(redirectResponse.idTokenClaims as Claims);
             }
+            // Reset redirect guard on successful redirect processing
+            window.__isRedirectingToLogin = false;
           }
         } catch (err) {
-          // swallow; we'll try silent acquisition below or on user action
-          // eslint-disable-next-line no-console
           console.warn("handleRedirectPromise failed:", err);
           handledRedirectRef.current = true;
         }
       }
 
+      // Direct SSO for My Apps portal launch - skip silent attempts, go straight to loginRedirect
+      // Check current accounts rather than state account to avoid re-triggering
+      const currentAccounts = msalInstance.getAllAccounts();
+      if (
+        !ssoAttemptedRef.current &&
+        currentAccounts.length === 0 &&
+        !window.__isRedirectingToLogin
+      ) {
+        const params = new URLSearchParams(window.location.search);
+        const loginHint = params.get("login_hint") || params.get("username");
+
+        // If launched from My Apps (login_hint present), immediately redirect for seamless SSO
+        if (loginHint) {
+          ssoAttemptedRef.current = true;
+          window.__isRedirectingToLogin = true;
+          console.log(
+            "My Apps launch detected; initiating direct loginRedirect for SSO"
+          );
+          try {
+            await msalInstance.loginRedirect({
+              ...loginRequest,
+              loginHint,
+              prompt: "none", // Attempt silent login first
+            });
+          } catch (redirErr) {
+            console.error("Direct SSO redirect failed", redirErr);
+            window.__isRedirectingToLogin = false;
+          }
+        }
+      }
+
       initializedRef.current = true;
+      setReady(true);
     }
   }, []);
 
@@ -159,7 +193,75 @@ export function useAuth(): UseAuthReturn {
     }
   }, [getAccount, ensureInitialized]);
 
+  // Acquire an API access token for the configured apiScope and call backend profile endpoint.
+  const fetchProfile = useCallback(async (): Promise<ProfileResult> => {
+    await ensureInitialized();
+    const acc = getAccount();
+    if (!acc) {
+      return { data: null, error: "Not signed in" };
+    }
+
+    let token: string | null = null;
+    try {
+      const silent = await msalInstance.acquireTokenSilent({
+        scopes: [apiScope],
+        account: acc,
+      });
+      token = silent.accessToken;
+    } catch (silentErr: any) {
+      // Fallback for interaction required
+      if (
+        silentErr instanceof InteractionRequiredAuthError ||
+        (silentErr.errorCode &&
+          String(silentErr.errorCode).includes("interaction"))
+      ) {
+        try {
+          const popup = await msalInstance.acquireTokenPopup({
+            scopes: [apiScope],
+          });
+          token = popup.accessToken;
+        } catch (popupErr) {
+          // eslint-disable-next-line no-console
+          console.error("Popup token acquisition failed", popupErr);
+          return { data: null, error: "Token acquisition (popup) failed" };
+        }
+      } else {
+        // eslint-disable-next-line no-console
+        console.error("Silent token acquisition failed", silentErr);
+        return { data: null, error: "Silent token acquisition failed" };
+      }
+    }
+
+    if (!token) {
+      return { data: null, error: "No access token obtained" };
+    }
+
+    // Determine backend base URL (supports local override via VITE_API_BASE_URL)
+    // @ts-ignore Vite replaces import.meta.env at build time; any-cast for runtime fallback.
+    const BACKEND_BASE_URL =
+      (import.meta as any).env?.VITE_API_BASE_URL ||
+      "https://sso-spike-backend.onrender.com";
+    try {
+      const resp = await fetch(`${BACKEND_BASE_URL}/api/profile`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+      if (!resp.ok) {
+        return { data: null, error: `API error ${resp.status}` };
+      }
+      const json = (await resp.json()) as Record<string, unknown>;
+      return { data: json, error: null };
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("API call failed", err);
+      return { data: null, error: "Network/API error" };
+    }
+  }, [ensureInitialized, getAccount]);
+
   return {
+    ready,
     account,
     idTokenClaims,
     login,
@@ -167,5 +269,6 @@ export function useAuth(): UseAuthReturn {
     getAccount,
     getIdTokenClaims,
     getAccessToken,
+    fetchProfile,
   };
 }
