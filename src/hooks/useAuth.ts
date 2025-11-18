@@ -108,7 +108,7 @@ export function useAuth(): UseAuthReturn {
             // Leave claims null until explicit login or token request succeeds.
           }
         } else {
-          // No cached accounts - check if this is SSO launch using captured initial URL
+          // No cached accounts - check if this is SSO launch
           const initialParams = new URLSearchParams(
             initialUrlParams.current || ""
           );
@@ -119,6 +119,15 @@ export function useAuth(): UseAuthReturn {
             currentParams.get("login_hint") ||
             currentParams.get("username");
 
+          // Detect My Apps launch: no cached accounts + fresh load + Microsoft referrer
+          const referrer = document.referrer;
+          const isMicrosoftReferrer =
+            referrer.includes("microsoft.com") ||
+            referrer.includes("office.com") ||
+            referrer.includes("live.com") ||
+            referrer.includes("portal.azure.com");
+          const isMyAppsLaunch = isMicrosoftReferrer || loginHint;
+
           console.log(
             "🔍 SSO Debug - Initial URL params:",
             initialUrlParams.current
@@ -128,6 +137,12 @@ export function useAuth(): UseAuthReturn {
             window.location.search
           );
           console.log("🔍 SSO Debug - loginHint:", loginHint);
+          console.log("🔍 SSO Debug - referrer:", referrer);
+          console.log(
+            "🔍 SSO Debug - isMicrosoftReferrer:",
+            isMicrosoftReferrer
+          );
+          console.log("🔍 SSO Debug - isMyAppsLaunch:", isMyAppsLaunch);
           console.log("🔍 SSO Debug - ssoAttempted:", ssoAttemptedRef.current);
           console.log(
             "🔍 SSO Debug - isRedirecting:",
@@ -135,22 +150,25 @@ export function useAuth(): UseAuthReturn {
           );
 
           if (
-            loginHint &&
+            isMyAppsLaunch &&
             !ssoAttemptedRef.current &&
             !window.__isRedirectingToLogin
           ) {
             ssoAttemptedRef.current = true;
             window.__isRedirectingToLogin = true;
             console.log(
-              "🚀 My Apps SSO launch detected - triggering loginRedirect with loginHint:",
+              "🚀 My Apps SSO launch detected - triggering loginRedirect",
               loginHint
+                ? `with loginHint: ${loginHint}`
+                : "without loginHint (referrer-based)"
             );
             try {
-              await msalInstance.loginRedirect({
+              const redirectRequest = {
                 ...loginRequest,
-                loginHint,
-                prompt: "none",
-              });
+                prompt: "none" as const,
+                ...(loginHint && { loginHint }),
+              };
+              await msalInstance.loginRedirect(redirectRequest);
             } catch (redirErr) {
               console.error("❌ SSO redirect failed:", redirErr);
               window.__isRedirectingToLogin = false;
