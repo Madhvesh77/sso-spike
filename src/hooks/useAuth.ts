@@ -75,6 +75,32 @@ export function useAuth(): UseAuthReturn {
         } catch (err) {
           console.warn("❌ handleRedirectPromise failed:", err);
           handledRedirectRef.current = true;
+
+          // Check if this is a multiple accounts error that requires interaction
+          if (
+            err instanceof InteractionRequiredAuthError &&
+            err.errorCode === "interaction_required" &&
+            err.errorMessage?.includes("multiple user identities")
+          ) {
+            console.log(
+              "🔄 Multiple accounts detected - retrying with interactive login"
+            );
+            // Reset flags to allow retry with interactive login
+            ssoAttemptedRef.current = false;
+            window.__isRedirectingToLogin = false;
+
+            // Trigger interactive login immediately
+            try {
+              await msalInstance.loginRedirect({
+                ...loginRequest,
+                prompt: "select_account" as const,
+              });
+              return; // Don't continue with normal initialization
+            } catch (retryErr) {
+              console.error("❌ Interactive login retry failed:", retryErr);
+            }
+          }
+
           window.__isRedirectingToLogin = false;
         }
       }
