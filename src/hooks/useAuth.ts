@@ -43,56 +43,36 @@ export function useAuth(): UseAuthReturn {
 
       if (!handledRedirectRef.current) {
         try {
+          console.log("🔄 Handling redirect promise...");
           const redirectResponse = await msalInstance.handleRedirectPromise();
           handledRedirectRef.current = true;
+          console.log("🔄 Redirect response:", redirectResponse);
           if (redirectResponse) {
+            console.log("✅ Successful redirect response received");
             const acct =
               redirectResponse.account ||
               msalInstance.getAllAccounts()[0] ||
               null;
-            if (acct) setAccount(acct);
+            if (acct) {
+              console.log("✅ Setting account from redirect:", acct.username);
+              setAccount(acct);
+            }
             if (redirectResponse.idTokenClaims) {
               setIdTokenClaims(redirectResponse.idTokenClaims as Claims);
             }
             // Reset redirect guard on successful redirect processing
             window.__isRedirectingToLogin = false;
+          } else {
+            console.log("ℹ️ No redirect response (normal page load)");
           }
         } catch (err) {
-          console.warn("handleRedirectPromise failed:", err);
+          console.warn("❌ handleRedirectPromise failed:", err);
           handledRedirectRef.current = true;
+          window.__isRedirectingToLogin = false;
         }
       }
 
-      // Direct SSO for My Apps portal launch - skip silent attempts, go straight to loginRedirect
-      // Check current accounts rather than state account to avoid re-triggering
-      const currentAccounts = msalInstance.getAllAccounts();
-      if (
-        !ssoAttemptedRef.current &&
-        currentAccounts.length === 0 &&
-        !window.__isRedirectingToLogin
-      ) {
-        const params = new URLSearchParams(window.location.search);
-        const loginHint = params.get("login_hint") || params.get("username");
-
-        // If launched from My Apps (login_hint present), immediately redirect for seamless SSO
-        if (loginHint) {
-          ssoAttemptedRef.current = true;
-          window.__isRedirectingToLogin = true;
-          console.log(
-            "My Apps launch detected; initiating direct loginRedirect for SSO"
-          );
-          try {
-            await msalInstance.loginRedirect({
-              ...loginRequest,
-              loginHint,
-              prompt: "none", // Attempt silent login first
-            });
-          } catch (redirErr) {
-            console.error("Direct SSO redirect failed", redirErr);
-            window.__isRedirectingToLogin = false;
-          }
-        }
-      }
+      // SSO logic moved to account initialization phase to avoid race conditions
 
       initializedRef.current = true;
       setReady(true);
@@ -125,10 +105,22 @@ export function useAuth(): UseAuthReturn {
           const params = new URLSearchParams(window.location.search);
           const loginHint = params.get("login_hint") || params.get("username");
           
-          if (loginHint && !ssoAttemptedRef.current && !window.__isRedirectingToLogin) {
+          console.log("🔍 SSO Debug - URL params:", window.location.search);
+          console.log("🔍 SSO Debug - loginHint:", loginHint);
+          console.log("🔍 SSO Debug - ssoAttempted:", ssoAttemptedRef.current);
+          console.log("🔍 SSO Debug - isRedirecting:", window.__isRedirectingToLogin);
+
+          if (
+            loginHint &&
+            !ssoAttemptedRef.current &&
+            !window.__isRedirectingToLogin
+          ) {
             ssoAttemptedRef.current = true;
             window.__isRedirectingToLogin = true;
-            console.log("My Apps SSO launch detected after initialization; triggering loginRedirect");
+            console.log(
+              "🚀 My Apps SSO launch detected - triggering loginRedirect with loginHint:", 
+              loginHint
+            );
             try {
               await msalInstance.loginRedirect({
                 ...loginRequest,
@@ -136,9 +128,16 @@ export function useAuth(): UseAuthReturn {
                 prompt: "none",
               });
             } catch (redirErr) {
-              console.error("SSO redirect failed", redirErr);
+              console.error("❌ SSO redirect failed:", redirErr);
               window.__isRedirectingToLogin = false;
+              ssoAttemptedRef.current = false; // Reset to allow retry
             }
+          } else {
+            console.log("❌ SSO conditions not met:", {
+              hasLoginHint: !!loginHint,
+              ssoAttempted: ssoAttemptedRef.current,
+              isRedirecting: window.__isRedirectingToLogin
+            });
           }
         }
       }
