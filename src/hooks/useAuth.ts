@@ -120,6 +120,26 @@ export function useAuth(): UseAuthReturn {
           } catch {
             // Leave claims null until explicit login or token request succeeds.
           }
+        } else {
+          // No cached accounts - check if this is SSO launch that needs to be handled
+          const params = new URLSearchParams(window.location.search);
+          const loginHint = params.get("login_hint") || params.get("username");
+          
+          if (loginHint && !ssoAttemptedRef.current && !window.__isRedirectingToLogin) {
+            ssoAttemptedRef.current = true;
+            window.__isRedirectingToLogin = true;
+            console.log("My Apps SSO launch detected after initialization; triggering loginRedirect");
+            try {
+              await msalInstance.loginRedirect({
+                ...loginRequest,
+                loginHint,
+                prompt: "none",
+              });
+            } catch (redirErr) {
+              console.error("SSO redirect failed", redirErr);
+              window.__isRedirectingToLogin = false;
+            }
+          }
         }
       }
     })();
