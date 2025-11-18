@@ -104,11 +104,14 @@ export function useAuth(): UseAuthReturn {
           // No cached accounts - check if this is SSO launch that needs to be handled
           const params = new URLSearchParams(window.location.search);
           const loginHint = params.get("login_hint") || params.get("username");
-          
+
           console.log("🔍 SSO Debug - URL params:", window.location.search);
           console.log("🔍 SSO Debug - loginHint:", loginHint);
           console.log("🔍 SSO Debug - ssoAttempted:", ssoAttemptedRef.current);
-          console.log("🔍 SSO Debug - isRedirecting:", window.__isRedirectingToLogin);
+          console.log(
+            "🔍 SSO Debug - isRedirecting:",
+            window.__isRedirectingToLogin
+          );
 
           if (
             loginHint &&
@@ -118,7 +121,7 @@ export function useAuth(): UseAuthReturn {
             ssoAttemptedRef.current = true;
             window.__isRedirectingToLogin = true;
             console.log(
-              "🚀 My Apps SSO launch detected - triggering loginRedirect with loginHint:", 
+              "🚀 My Apps SSO launch detected - triggering loginRedirect with loginHint:",
               loginHint
             );
             try {
@@ -136,7 +139,7 @@ export function useAuth(): UseAuthReturn {
             console.log("❌ SSO conditions not met:", {
               hasLoginHint: !!loginHint,
               ssoAttempted: ssoAttemptedRef.current,
-              isRedirecting: window.__isRedirectingToLogin
+              isRedirecting: window.__isRedirectingToLogin,
             });
           }
         }
