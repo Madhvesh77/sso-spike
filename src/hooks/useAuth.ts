@@ -37,6 +37,13 @@ export function useAuth(): UseAuthReturn {
   // Ensure MSAL is initialized before any calls.
   const ssoAttemptedRef = useRef(false);
 
+  // Capture URL parameters immediately on load before they get cleared
+  const initialUrlParams = useRef<string | null>(null);
+  if (initialUrlParams.current === null) {
+    initialUrlParams.current = window.location.search;
+    console.log("📥 Initial URL params captured:", initialUrlParams.current);
+  }
+
   const ensureInitialized = useCallback(async () => {
     if (!initializedRef.current) {
       await msalInstance.initialize();
@@ -101,11 +108,25 @@ export function useAuth(): UseAuthReturn {
             // Leave claims null until explicit login or token request succeeds.
           }
         } else {
-          // No cached accounts - check if this is SSO launch that needs to be handled
-          const params = new URLSearchParams(window.location.search);
-          const loginHint = params.get("login_hint") || params.get("username");
+          // No cached accounts - check if this is SSO launch using captured initial URL
+          const initialParams = new URLSearchParams(
+            initialUrlParams.current || ""
+          );
+          const currentParams = new URLSearchParams(window.location.search);
+          const loginHint =
+            initialParams.get("login_hint") ||
+            initialParams.get("username") ||
+            currentParams.get("login_hint") ||
+            currentParams.get("username");
 
-          console.log("🔍 SSO Debug - URL params:", window.location.search);
+          console.log(
+            "🔍 SSO Debug - Initial URL params:",
+            initialUrlParams.current
+          );
+          console.log(
+            "🔍 SSO Debug - Current URL params:",
+            window.location.search
+          );
           console.log("🔍 SSO Debug - loginHint:", loginHint);
           console.log("🔍 SSO Debug - ssoAttempted:", ssoAttemptedRef.current);
           console.log(
